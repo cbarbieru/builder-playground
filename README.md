@@ -1,3 +1,14 @@
+# Quick start
+```bash
+go run main.go cook opstack --external-builder op-rbuilder --output <your_path>
+```
+then cast a transaction to rollup-boost
+```bash
+cast send 0x90F79bf6EB2c4f870365E785982E1f101E93b906 \
+  --value 0.01ether \
+  --rpc-url http://127.0.0.1:8554 \
+  --private-key 0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97
+```
 # Builder Playground
 
 [![Goreport status](https://goreportcard.com/badge/github.com/flashbots/builder-playground)](https://goreportcard.com/report/github.com/flashbots/builder-playground)

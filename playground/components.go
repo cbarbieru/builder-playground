@@ -26,8 +26,8 @@ type RollupBoost struct {
 
 func (r *RollupBoost) Run(service *Service, ctx *ExContext) {
 	service.
-		WithImage("docker.io/flashbots/rollup-boost").
-		WithTag("0.7.0").
+		WithImage("docker.io/cbarbieru/rollup-boost").
+		WithTag("0.1").
 		WithArgs(
 			"--rpc-host", "0.0.0.0",
 			"--rpc-port", `{{Port "authrpc" 8551}}`,
@@ -35,6 +35,8 @@ func (r *RollupBoost) Run(service *Service, ctx *ExContext) {
 			"--l2-url", Connect(r.ELNode, "authrpc"),
 			"--builder-jwt-path", "/data/jwtsecret",
 			"--builder-url", r.Builder,
+			"--guarantor-jwt-path", "/data/jwtsecret",
+			"--guarantor-url", "http://host.docker.internal:1545",
 		).WithArtifact("/data/jwtsecret", "jwtsecret")
 
 	if r.Flashblocks {

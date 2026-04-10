@@ -684,6 +684,11 @@ func (d *LocalRunner) toDockerComposeService(s *Service) (map[string]interface{}
 	// create the bind volumes
 	var createdVolumes []string
 	for localPath, volume := range s.VolumesMapped {
+		if volume.HostPath != "" {
+			volumes[volume.HostPath] = localPath
+			continue
+		}
+
 		dockerVolumeName := d.createVolumeName(s.Name, volume.Name)
 
 		if volume.IsLocal {

@@ -3,6 +3,7 @@ package playground
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/flashbots/builder-playground/utils"
@@ -79,12 +80,23 @@ func ValidateRecipe(recipe Recipe, baseRecipes []Recipe) *ValidationResult {
 }
 
 func validateYAMLRecipe(recipe *YAMLRecipe, baseRecipes []Recipe, result *ValidationResult) {
-	// Check base recipe exists
+	// Check base recipe exists (built-in name or file path)
 	baseFound := false
-	for _, r := range baseRecipes {
-		if r.Name() == recipe.config.Base {
+	if isYAMLBasePath(recipe.config.Base) {
+		// File-based base: check the referenced file exists
+		basePath := recipe.config.Base
+		if !filepath.IsAbs(basePath) {
+			basePath = filepath.Join(filepath.Dir(recipe.filePath), basePath)
+		}
+		if _, err := os.Stat(basePath); err == nil {
 			baseFound = true
-			break
+		}
+	} else {
+		for _, r := range baseRecipes {
+			if r.Name() == recipe.config.Base {
+				baseFound = true
+				break
+			}
 		}
 	}
 	if !baseFound {

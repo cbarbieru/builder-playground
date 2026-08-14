@@ -150,3 +150,29 @@ func TestL1RecipeBundlerWiring(t *testing.T) {
 		require.Equal(t, "true", findService(t, unsafe, "bundler").Env["UNSAFE"])
 	})
 }
+
+func TestL1RecipeExternalBundler(t *testing.T) {
+	recipe := &L1Recipe{bundler: BundlerExternal}
+	require.NoError(t, recipe.Validate())
+
+	// the chain is prepared for ERC-4337 even though no bundler runs here
+	require.NotEmpty(t, recipe.Artifacts().l1PredeployData)
+
+	component := recipe.Apply(testBundlerCtx())
+	require.Nil(t, component.FindService("bundler"), "external bundler must not start a service")
+
+	el := component.FindService("el")
+	require.NotNil(t, el)
+	require.Contains(t, argValue(t, el.Args, "--http.api"), "debug,trace")
+}
+
+func TestBundlerUnsafeRequiresALocalBundler(t *testing.T) {
+	err := (&L1Recipe{bundler: BundlerExternal, bundlerUnsafe: true}).Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "--bundler-unsafe requires --bundler")
+
+	// and it is fine for the bundlers we actually run
+	for _, kind := range []BundlerKind{BundlerAlto, BundlerRundler} {
+		require.NoError(t, (&L1Recipe{bundler: kind, bundlerUnsafe: true}).Validate())
+	}
+}

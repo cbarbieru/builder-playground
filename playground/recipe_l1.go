@@ -68,6 +68,15 @@ func (l *L1Recipe) Flags() *flag.FlagSet {
 	return flags
 }
 
+// Validate rejects invalid flag combinations.
+func (l *L1Recipe) Validate() error {
+	if l.bundlerUnsafe && l.bundler != BundlerAlto && l.bundler != BundlerRundler {
+		return fmt.Errorf("--bundler-unsafe requires --bundler to be one of: %s, %s",
+			BundlerAlto, BundlerRundler)
+	}
+	return nil
+}
+
 func (l *L1Recipe) Artifacts() *ArtifactsBuilder {
 	builder := NewArtifactsBuilder()
 	builder.ApplyLatestL1Fork(l.latestFork)
@@ -165,6 +174,9 @@ func (l *L1Recipe) Apply(ctx *ExContext) *Component {
 		component.AddComponent(ctx, &Alto{ELService: "el", Unsafe: l.bundlerUnsafe})
 	case BundlerRundler:
 		component.AddComponent(ctx, &Rundler{ELService: "el", Unsafe: l.bundlerUnsafe})
+	case BundlerExternal:
+		// the bundler runs elsewhere; the genesis predeploys and the debug namespace on
+		// the execution client are all it needs from us
 	}
 
 	component.RunContenderIfEnabled(ctx)
@@ -175,12 +187,14 @@ func (l *L1Recipe) Output(manifest *Manifest) map[string]interface{} {
 	output := map[string]interface{}{}
 
 	if l.bundler != "" {
+		output["bundler-kind"] = string(l.bundler)
+		output["entry-point-v0.6"] = EntryPointV06Address
+		output["simple-account-factory-v0.6"] = SimpleAccountFactoryV06Address
+
+		// there is no bundler service when the bundler runs elsewhere
 		if bundler, ok := manifest.GetService("bundler"); ok {
 			if port, ok := bundler.GetPort("http"); ok {
 				output["bundler"] = fmt.Sprintf("http://localhost:%d", port.HostPort)
-				output["bundler-kind"] = string(l.bundler)
-				output["entry-point-v0.6"] = EntryPointV06Address
-				output["simple-account-factory-v0.6"] = SimpleAccountFactoryV06Address
 			}
 		}
 	}

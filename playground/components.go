@@ -1101,10 +1101,17 @@ type BundlerKind string
 const (
 	BundlerAlto    BundlerKind = "alto"
 	BundlerRundler BundlerKind = "rundler"
+
+	// BundlerExternal prepares the chain for ERC-4337 without running a bundler, for
+	// when the bundler runs elsewhere. A bundler is a plain RPC client of the execution
+	// client, so nothing in the recipe has to connect back to it; it only needs the
+	// contracts predeployed and debug_traceCall exposed. Combine with --bind-external so
+	// the other machine can reach the execution client.
+	BundlerExternal BundlerKind = "external"
 )
 
 // SupportedBundlers lists the bundlers that can be passed to --bundler.
-var SupportedBundlers = []BundlerKind{BundlerAlto, BundlerRundler}
+var SupportedBundlers = []BundlerKind{BundlerAlto, BundlerRundler, BundlerExternal}
 
 // BundlerNames returns the supported bundler names, for flag help and errors.
 func BundlerNames() []string {

@@ -783,6 +783,13 @@ func runIt(recipe playground.Recipe) error {
 		overrides[parts[0]] = parts[1]
 	}
 
+	// recipes may reject invalid flag combinations
+	if validator, ok := recipe.(interface{ Validate() error }); ok {
+		if err := validator.Validate(); err != nil {
+			return err
+		}
+	}
+
 	slog.Debug("Building artifacts...")
 	builder := recipe.Artifacts()
 	builder.GenesisDelay(genesisDelayFlag)

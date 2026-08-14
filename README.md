@@ -49,6 +49,10 @@ builder-playground start l1
 
 # L2 OpStack with external builder support
 builder-playground start opstack --external-builder http://localhost:4444
+
+# L1 with an ERC-4337 bundler, running the full validation rules (safe mode)
+builder-playground start l1 --bundler alto
+builder-playground start l1 --bundler rundler
 ```
 
 ## CI / GitHub Actions
@@ -134,12 +138,37 @@ Flags:
 
 ### ERC-4337 bundlers
 
-The `l1` recipe can run an ERC-4337 bundler against the execution client:
+The `l1` recipe can run an ERC-4337 bundler against the execution client. Both options
+run in **safe mode**, enforcing the full ERC-7562 validation rules:
 
 ```bash
 $ builder-playground start l1 --bundler alto     # https://github.com/pimlicolabs/alto
 $ builder-playground start l1 --bundler rundler  # https://github.com/alchemyplatform/rundler
 ```
+
+A full run, from a fresh devnet to a mined UserOperation:
+
+```bash
+# 1. start the devnet with a bundler
+$ builder-playground start l1 --bundler rundler
+
+# 2. look up the endpoints (in another shell)
+$ builder-playground port bundler http   # bundler JSON-RPC, e.g. 3000
+$ builder-playground port el http        # execution client, e.g. 8545
+
+# 3. create an account by calling the factory directly, from a prefunded account
+$ cast send 0x9406Cc6185a346906296840746125a0E44976454 \
+    "createAccount(address,uint256)" 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 1 \
+    --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+    --rpc-url http://localhost:8545
+
+# 4. the bundler is a standard ERC-4337 JSON-RPC endpoint
+$ cast rpc eth_supportedEntryPoints --rpc-url http://localhost:3000
+["0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789"]
+```
+
+Fund the new account (`cast send <account> --value 1ether ...`), then send
+UserOperations from it with any ERC-4337 client.
 
 This predeploys the ERC-4337 **v0.6** contracts in the L1 genesis, so they are available
 at block 0 at their canonical addresses:

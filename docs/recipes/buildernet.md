@@ -5,6 +5,8 @@ Deploy a full L1 stack with mev-boost and builder-hub.
 ## Flags
 
 - `block-time` (duration): Block time to use for the L1. Default to '12s'.
+- `bundler` (string): attach an ERC-4337 bundler and predeploy the ERC-4337 v0.6 contracts (one of: alto, rundler). Default to ''.
+- `bundler-unsafe` (bool): run the bundler without the ERC-7562 validation rules (bundlers run in safe mode by default). Default to 'false'.
 - `latest-fork` (bool): use the latest fork. Default to 'false'.
 - `rbuilder` (bool): include rbuilder in the recipe. Default to 'false'.
 - `secondary-el` (string): Address or port to use for the secondary EL (execution layer); Can be a port number (e.g., '8551') in which case the full URL is derived as `http://localhost:<port>` or a complete URL (e.g., `http://docker-container-name:8551`), use `http://host.docker.internal:<port>` to reach a secondary execution client that runs on your host and not within Docker.. Default to ''.

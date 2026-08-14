@@ -435,6 +435,10 @@ func (o *OpGeth) Apply(ctx *ExContext) *Component {
 type RethEL struct {
 	UseRethForValidation bool
 	UseNativeReth        bool
+
+	// EnableDebugRPC exposes the debug and trace namespaces over HTTP. ERC-4337 bundlers
+	// need debug_traceCall on HTTP to enforce the validation rules in safe mode.
+	EnableDebugRPC bool
 }
 
 var rethELRelease = &release{
@@ -473,6 +477,11 @@ func logLevelToRethVerbosity(logLevel LogLevel) string {
 func (r *RethEL) Apply(ctx *ExContext) *Component {
 	component := NewComponent("reth")
 
+	httpAPI := "admin,eth,web3,net,rpc,mev,flashbots"
+	if r.EnableDebugRPC {
+		httpAPI += ",debug,trace"
+	}
+
 	// start the reth el client
 	svc := component.NewService("el").
 		WithImage("ghcr.io/paradigmxyz/reth").
@@ -489,7 +498,7 @@ func (r *RethEL) Apply(ctx *ExContext) *Component {
 			// http config
 			"--http",
 			"--http.addr", "0.0.0.0",
-			"--http.api", "admin,eth,web3,net,rpc,mev,flashbots",
+			"--http.api", httpAPI,
 			"--http.port", `{{Port "http" 8545}}`,
 			// websocket config
 			"--ws",
@@ -1082,6 +1091,162 @@ func (f *Fileserver) Apply(ctx *ExContext) *Component {
 			Retries:     3,
 			StartPeriod: 1 * time.Second,
 		})
+
+	return component
+}
+
+// BundlerKind selects which ERC-4337 bundler implementation a recipe attaches.
+type BundlerKind string
+
+const (
+	BundlerAlto    BundlerKind = "alto"
+	BundlerRundler BundlerKind = "rundler"
+)
+
+// SupportedBundlers lists the bundlers that can be passed to --bundler.
+var SupportedBundlers = []BundlerKind{BundlerAlto, BundlerRundler}
+
+// BundlerNames returns the supported bundler names, for flag help and errors.
+func BundlerNames() []string {
+	names := make([]string, 0, len(SupportedBundlers))
+	for _, kind := range SupportedBundlers {
+		names = append(names, string(kind))
+	}
+	return names
+}
+
+// ParseBundlerKind validates the --bundler flag value.
+func ParseBundlerKind(name string) (BundlerKind, error) {
+	for _, kind := range SupportedBundlers {
+		if string(kind) == name {
+			return kind, nil
+		}
+	}
+	return "", fmt.Errorf("unknown bundler %q, supported bundlers are: %s", name, strings.Join(BundlerNames(), ", "))
+}
+
+// BundlerKind implements pflag.Value so an invalid --bundler fails during flag parsing.
+func (b *BundlerKind) String() string { return string(*b) }
+
+func (b *BundlerKind) Set(name string) error {
+	kind, err := ParseBundlerKind(name)
+	if err != nil {
+		return err
+	}
+	*b = kind
+	return nil
+}
+
+func (b *BundlerKind) Type() string { return "string" }
+
+// The bundler signs its own bundle transactions, so it needs dedicated funded accounts.
+// These indexes into staticPrefundedAccounts mirror pimlico's mock-aa-environment and
+// deliberately avoid index 0, which `builder-playground test` and contender use.
+var (
+	bundlerExecutorKeyIndexes = []int{4, 5, 6, 7, 9}
+	bundlerUtilityKeyIndex    = 8
+)
+
+func bundlerExecutorKeys() []string {
+	keys := make([]string, 0, len(bundlerExecutorKeyIndexes))
+	for _, i := range bundlerExecutorKeyIndexes {
+		keys = append(keys, staticPrefundedAccounts[i])
+	}
+	return keys
+}
+
+func bundlerUtilityKey() string {
+	return staticPrefundedAccounts[bundlerUtilityKeyIndex]
+}
+
+// Alto is pimlico's TypeScript ERC-4337 bundler. It runs in safe mode, which enforces the
+// full set of ERC-7562 validation rules and therefore needs debug_traceCall on the EL.
+type Alto struct {
+	// ELService is the name of the execution client service to bundle for.
+	ELService string
+
+	// Unsafe turns the ERC-7562 validation rules off.
+	Unsafe bool
+}
+
+func (a *Alto) Apply(ctx *ExContext) *Component {
+	component := NewComponent("alto")
+
+	// Pinned to v1.1.0: it is the last release whose safe mode works against EntryPoint
+	// v0.6. Every v1.2.x release fails to bundle in safe mode, either with
+	// "Invalid response. simulateCall must revert" (v1.2.0 to v1.2.5) or by replying
+	// 0x00..0 (v1.2.6, v1.2.7). v1.1.0 also uses the older camelCase CLI.
+	component.NewService("bundler").
+		WithImage("ghcr.io/pimlicolabs/alto").
+		WithTag("v1.1.0").
+		WithEntrypoint("node").
+		WithArgs(
+			"src/lib/cli/alto.js", "run",
+			"--networkName", "builder-playground",
+			"--entryPoint", EntryPointV06Address,
+			"--entryPointVersion", "0.6",
+			"--rpcUrl", Connect(a.ELService, "http"),
+			"--signerPrivateKeys", strings.Join(bundlerExecutorKeys(), ","),
+			"--utilityPrivateKey", bundlerUtilityKey(),
+			// enforce the full ERC-7562 validation rules
+			"--safeMode", strconv.FormatBool(!a.Unsafe),
+			// the signers are prefunded at genesis, so no minimum is required
+			"--minBalance", "0",
+			"--port", `{{Port "http" 4337}}`,
+			"--logLevel", string(ctx.LogLevel),
+		).
+		DependsOnHealthy(a.ELService).
+		WithReady(ReadyCheck{
+			QueryURL:    "http://localhost:4337/health",
+			Interval:    1 * time.Second,
+			Timeout:     30 * time.Second,
+			Retries:     30,
+			StartPeriod: 1 * time.Second,
+		})
+
+	return component
+}
+
+// Rundler is Alchemy's Rust ERC-4337 bundler. Safe mode is the default (there is an
+// --unsafe flag to turn the validation rules off), so it also needs debug_traceCall.
+type Rundler struct {
+	// ELService is the name of the execution client service to bundle for.
+	ELService string
+
+	// Unsafe turns the ERC-7562 validation rules off.
+	Unsafe bool
+}
+
+func (r *Rundler) Apply(ctx *ExContext) *Component {
+	component := NewComponent("rundler")
+
+	service := component.NewService("bundler").
+		WithImage("alchemyplatform/rundler").
+		WithTag("v0.11.0").
+		WithEntrypoint("/usr/local/bin/rundler").
+		WithArgs("node").
+		// 'dev' is rundler's built-in chain spec for chain id 1337, which is what the
+		// playground L1 uses. It inherits the canonical entry point addresses.
+		WithEnv("NETWORK", "dev").
+		WithEnv("NODE_HTTP", Connect(r.ELService, "http")).
+		WithEnv("SIGNER_PRIVATE_KEYS", strings.Join(bundlerExecutorKeys(), ",")).
+		WithEnv("ENABLED_ENTRY_POINTS", "v0.6").
+		WithEnv("RPC_HOST", "0.0.0.0").
+		WithEnv("RPC_PORT", `{{Port "http" 3000}}`).
+		WithEnv("METRICS_PORT", `{{Port "metrics" 8080}}`).
+		WithEnv("RUST_LOG", string(ctx.LogLevel)).
+		DependsOnHealthy(r.ELService).
+		WithReady(ReadyCheck{
+			QueryURL:    "http://localhost:3000/health",
+			Interval:    1 * time.Second,
+			Timeout:     30 * time.Second,
+			Retries:     30,
+			StartPeriod: 1 * time.Second,
+		})
+
+	if r.Unsafe {
+		service.WithEnv("UNSAFE", "true")
+	}
 
 	return component
 }

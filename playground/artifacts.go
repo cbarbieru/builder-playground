@@ -59,6 +59,38 @@ var opGenesisIsthmus []byte
 //go:embed utils/genesis-jovian.json
 var opGenesisJovian []byte
 
+// aaPredeploysData holds the ERC-4337 v0.6 contracts (EntryPoint, its SenderCreator,
+// SimpleAccountFactory and the account implementation) plus the deterministic CREATE2
+// deployer, as a genesis alloc.
+// Regenerate with playground/utils/generate-aa-predeploys.sh.
+//
+//go:embed utils/aa-predeploys.json
+var aaPredeploysData []byte
+
+// ERC-4337 v0.6 canonical addresses. These are the same on every chain because they are
+// deployed through the deterministic CREATE2 deployer.
+//
+// v0.6 rather than v0.7: v0.6 keeps simulateValidation on the EntryPoint, so bundlers
+// simulate against the real contract. v0.7 moved simulation into a separate
+// EntryPointSimulations that bundlers inject with a state override, whose constructor
+// never runs, which breaks account creation through initCode in safe mode.
+const (
+	// EntryPointV06Address is the ERC-4337 v0.6 EntryPoint.
+	EntryPointV06Address = "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789"
+
+	// SimpleAccountFactoryV06Address is the reference v0.6 account factory.
+	SimpleAccountFactoryV06Address = "0x9406Cc6185a346906296840746125a0E44976454"
+
+	// DeterministicDeployerAddress is Arachnid's CREATE2 deployer. Bundlers rely on it to
+	// deploy their simulation contracts at startup.
+	DeterministicDeployerAddress = "0x4e59b44847b379578588920cA78FbF26c0B4956C"
+)
+
+// ERC4337Predeploys returns the ERC-4337 v0.6 genesis alloc.
+func ERC4337Predeploys() []byte {
+	return aaPredeploysData
+}
+
 //go:embed utils/state-isthmus.json
 var opStateIsthmus []byte
 
@@ -125,6 +157,11 @@ type ArtifactsBuilder struct {
 	// Extra files to copy to artifacts (artifactName -> sourcePath)
 	extraFiles     map[string]string
 	predeploysFile string
+
+	// l1PredeployData is a genesis alloc (JSON) merged into the L1 genesis. Unlike
+	// predeploysFile, which is a user-supplied path applied to the L2 genesis, this is
+	// supplied by a recipe, e.g. the ERC-4337 contracts needed by a bundler.
+	l1PredeployData []byte
 }
 
 func NewArtifactsBuilder() *ArtifactsBuilder {
@@ -184,6 +221,12 @@ func (b *ArtifactsBuilder) PredeployFile(filePath string) *ArtifactsBuilder {
 	return b
 }
 
+// WithL1Predeploys merges the given genesis alloc (JSON) into the L1 genesis.
+func (b *ArtifactsBuilder) WithL1Predeploys(data []byte) *ArtifactsBuilder {
+	b.l1PredeployData = data
+	return b
+}
+
 func (b *ArtifactsBuilder) loadPredeploys() (types.GenesisAlloc, error) {
 	if b.predeploysFile == "" {
 		return types.GenesisAlloc{}, nil
@@ -197,6 +240,18 @@ func (b *ArtifactsBuilder) loadPredeploys() (types.GenesisAlloc, error) {
 		return nil, fmt.Errorf("failed to parse predeploy JSON: %w", err)
 	}
 	slog.Debug("loaded predeploys", "count", len(alloc))
+	return alloc, nil
+}
+
+func (b *ArtifactsBuilder) loadL1Predeploys() (types.GenesisAlloc, error) {
+	if len(b.l1PredeployData) == 0 {
+		return types.GenesisAlloc{}, nil
+	}
+	var alloc types.GenesisAlloc
+	if err := json.Unmarshal(b.l1PredeployData, &alloc); err != nil {
+		return nil, fmt.Errorf("failed to parse L1 predeploy JSON: %w", err)
+	}
+	slog.Debug("loaded L1 predeploys", "count", len(alloc))
 	return alloc, nil
 }
 
@@ -258,6 +313,15 @@ func (b *ArtifactsBuilder) Build(out *output) error {
 
 	// add pre-funded accounts
 	if err := appendPrefundedAccountsToAlloc(&gen.Alloc, b.getPrefundedAccounts()); err != nil {
+		return err
+	}
+
+	// add the recipe-supplied L1 predeploys (e.g. the ERC-4337 contracts)
+	l1Predeploys, err := b.loadL1Predeploys()
+	if err != nil {
+		return err
+	}
+	if err := appendPredeploysToAlloc(&gen.Alloc, l1Predeploys); err != nil {
 		return err
 	}
 

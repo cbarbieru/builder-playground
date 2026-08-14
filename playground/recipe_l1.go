@@ -3,6 +3,7 @@ package playground
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	flag "github.com/spf13/pflag"
@@ -36,6 +37,13 @@ type L1Recipe struct {
 	useSeparateMevBoost bool
 
 	withRbuilder bool
+
+	// bundler attaches an ERC-4337 bundler (alto or rundler) to the execution client and
+	// predeploys the ERC-4337 v0.6 contracts in the L1 genesis. Empty means no bundler.
+	bundler BundlerKind
+
+	// bundlerUnsafe turns the bundler's ERC-7562 validation rules off.
+	bundlerUnsafe bool
 }
 
 func (l *L1Recipe) Name() string {
@@ -55,6 +63,8 @@ func (l *L1Recipe) Flags() *flag.FlagSet {
 	flags.BoolVar(&l.useNativeReth, "use-native-reth", false, "use the native reth binary")
 	flags.BoolVar(&l.useSeparateMevBoost, "use-separate-mev-boost", false, "use separate mev-boost and mev-boost-relay services")
 	flags.BoolVar(&l.withRbuilder, "rbuilder", false, "include rbuilder in the recipe")
+	flags.Var(&l.bundler, "bundler", fmt.Sprintf("attach an ERC-4337 bundler and predeploy the ERC-4337 v0.6 contracts (one of: %s)", strings.Join(BundlerNames(), ", ")))
+	flags.BoolVar(&l.bundlerUnsafe, "bundler-unsafe", false, "run the bundler without the ERC-7562 validation rules (bundlers run in safe mode by default)")
 	return flags
 }
 
@@ -62,6 +72,11 @@ func (l *L1Recipe) Artifacts() *ArtifactsBuilder {
 	builder := NewArtifactsBuilder()
 	builder.ApplyLatestL1Fork(l.latestFork)
 	builder.L1BlockTime(max(1, uint64(l.blockTime.Seconds())))
+
+	if l.bundler != "" {
+		// the bundler needs the EntryPoint and the account factory to exist from block 0
+		builder.WithL1Predeploys(ERC4337Predeploys())
+	}
 
 	return builder
 }
@@ -74,6 +89,8 @@ func (l *L1Recipe) Apply(ctx *ExContext) *Component {
 	component.AddComponent(ctx, &RethEL{
 		UseRethForValidation: l.useRethForValidation,
 		UseNativeReth:        l.useNativeReth,
+		// bundlers run in safe mode, which needs debug_traceCall over HTTP
+		EnableDebugRPC: l.bundler != "",
 	})
 
 	var elService string
@@ -141,10 +158,32 @@ func (l *L1Recipe) Apply(ctx *ExContext) *Component {
 		component.AddComponent(ctx, &Rbuilder{})
 	}
 
+	// The bundler talks plain JSON-RPC, so it always targets the execution client directly
+	// rather than the cl-proxy that may sit in front of it for the beacon node.
+	switch l.bundler {
+	case BundlerAlto:
+		component.AddComponent(ctx, &Alto{ELService: "el", Unsafe: l.bundlerUnsafe})
+	case BundlerRundler:
+		component.AddComponent(ctx, &Rundler{ELService: "el", Unsafe: l.bundlerUnsafe})
+	}
+
 	component.RunContenderIfEnabled(ctx)
 	return component
 }
 
 func (l *L1Recipe) Output(manifest *Manifest) map[string]interface{} {
-	return map[string]interface{}{}
+	output := map[string]interface{}{}
+
+	if l.bundler != "" {
+		if bundler, ok := manifest.GetService("bundler"); ok {
+			if port, ok := bundler.GetPort("http"); ok {
+				output["bundler"] = fmt.Sprintf("http://localhost:%d", port.HostPort)
+				output["bundler-kind"] = string(l.bundler)
+				output["entry-point-v0.6"] = EntryPointV06Address
+				output["simple-account-factory-v0.6"] = SimpleAccountFactoryV06Address
+			}
+		}
+	}
+
+	return output
 }

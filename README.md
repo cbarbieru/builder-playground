@@ -129,6 +129,73 @@ Flags:
 - `--secondary-el`: Host or port to use for a secondary el (enables the internal cl-proxy proxy). Can be a port number (e.g., '8551') in which case the full URL is derived as `http://localhost:<port>` or a complete URL (e.g., `http://remote-host:8551`), use `http://host.docker.internal:<port>` to reach a secondary execution client that runs on your host and not within Docker.
 - `--use-native-reth`: Run the Reth EL binary on the host instead of docker (recommended to bind to the Reth DB)
 - `--use-separate-mev-boost`: Spins a seperate service for mev-boost in addition with mev-boost-relay
+- `--bundler`: Attach an ERC-4337 bundler, either `alto` or `rundler`. See [ERC-4337 bundlers](#erc-4337-bundlers).
+- `--bundler-unsafe`: Run the bundler without the ERC-7562 validation rules.
+
+### ERC-4337 bundlers
+
+The `l1` recipe can run an ERC-4337 bundler against the execution client:
+
+```bash
+$ builder-playground start l1 --bundler alto     # https://github.com/pimlicolabs/alto
+$ builder-playground start l1 --bundler rundler  # https://github.com/alchemyplatform/rundler
+```
+
+This predeploys the ERC-4337 **v0.6** contracts in the L1 genesis, so they are available
+at block 0 at their canonical addresses:
+
+| Contract | Address |
+| --- | --- |
+| EntryPoint v0.6 | `0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789` |
+| SenderCreator v0.6 | `0x7fc98430eAEdbb6070B35B39D798725049088348` |
+| SimpleAccountFactory v0.6 | `0x9406Cc6185a346906296840746125a0E44976454` |
+| SimpleAccount v0.6 implementation | `0x8ABB13360b87Be5EEb1B98647A016adD927a136c` |
+| Deterministic CREATE2 deployer | `0x4e59b44847b379578588920cA78FbF26c0B4956C` |
+
+v0.6 is used rather than v0.7 because it is the version that works under the full
+ERC-7562 validation rules. v0.6 keeps `simulateValidation` on the EntryPoint, so bundlers
+simulate against the real contract. v0.7 moved simulation into a separate
+`EntryPointSimulations` that bundlers inject with a state override; because that is
+*deployed* bytecode its constructor never runs, leaving its `senderCreator` immutable at
+zero, so deploying an account through `initCode` fails with `AA13` in safe mode.
+
+The bundler listens on the `bundler` service (`alto` on port 4337, `rundler` on 3000);
+`builder-playground` prints its URL on startup, and `builder-playground port bundler http`
+looks it up. The bundler signs its own transactions with the last of the [static prefunded
+accounts](#static-prefunded-accounts), leaving the first account free for
+`builder-playground test` and contender.
+
+Both bundlers run in **safe mode**, which enforces the full ERC-7562 validation rules. This
+requires `debug_traceCall`, so `--bundler` also enables the `debug` and `trace` namespaces
+on Reth's HTTP endpoint (they are off by default). Pass `--bundler-unsafe` to turn the
+validation rules off.
+
+Both bundlers are pinned to versions whose safe mode works against EntryPoint v0.6:
+`rundler` v0.11.0 and `alto` **v1.1.0**. Every alto v1.2.x release fails to bundle in safe
+mode, either with `Invalid response. simulateCall must revert` (v1.2.0–v1.2.5) or by
+replying `0x00…0` (v1.2.6, v1.2.7); v1.1.0 is the last release that works, and it uses the
+older camelCase CLI.
+
+Verified by sending signed UserOperations end to end against Reth:
+
+| `eth_sendUserOperation` | alto (safe) | alto + `--bundler-unsafe` | rundler (safe) | rundler + `--bundler-unsafe` |
+| --- | --- | --- | --- | --- |
+| from an already deployed account | ✓ | ✓ | ✓ | ✓ |
+| deploying an account via `initCode` | ✗ | ✗ | ✓ | ✓ |
+
+> [!NOTE]
+> **alto cannot deploy accounts through `initCode`.** Its gas estimator binary-searches
+> `verificationGasLimit` and gives up around 307k, just below the ~400k that account
+> creation needs on this chain, and it substitutes its own estimate even when the caller
+> supplies a larger value. This is independent of safe mode — it fails with
+> `--bundler-unsafe` too. Create accounts by calling
+> `SimpleAccountFactory.createAccount(owner, salt)` directly (a normal transaction), then
+> send UserOperations from them; that path works in safe mode on both bundlers. rundler
+> handles `initCode` fine.
+
+The predeploys live in `playground/utils/aa-predeploys.json` and are regenerated with
+`playground/utils/generate-aa-predeploys.sh`, which deploys pimlico's reference
+environment against a throwaway anvil and extracts the v0.7 accounts.
 
 ### OpStack Recipe
 

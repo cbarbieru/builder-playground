@@ -27,4 +27,6 @@ func init() {
 	register(&BuilderHub{})
 	register(&ChainMonitor{})
 	register(&Bootnode{})
+	register(&Alto{})
+	register(&Rundler{})
 }

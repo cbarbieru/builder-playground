@@ -224,7 +224,7 @@ Verified by sending signed UserOperations end to end against Reth:
 
 The predeploys live in `playground/utils/aa-predeploys.json` and are regenerated with
 `playground/utils/generate-aa-predeploys.sh`, which deploys pimlico's reference
-environment against a throwaway anvil and extracts the v0.7 accounts.
+environment against a throwaway anvil and extracts the v0.6 accounts.
 
 ### OpStack Recipe
 

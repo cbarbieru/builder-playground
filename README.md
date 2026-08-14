@@ -43,17 +43,42 @@ These commands install to different directories as mentioned above so make sure 
 
 ## Quick Examples
 
+Run an ERC-4337 bundler against a full L1 devnet. Both layouts predeploy the ERC-4337 v0.6
+contracts at genesis and run the bundler in **safe mode**, enforcing the full ERC-7562
+validation rules.
+
+**Colocated** — the bundler runs alongside the chain, on the same Docker network:
+
 ```bash
-# L1 environment with mev-boost relay
-builder-playground start l1
-
-# L2 OpStack with external builder support
-builder-playground start opstack --external-builder http://localhost:4444
-
-# L1 with an ERC-4337 bundler, running the full validation rules (safe mode)
+# alto (TypeScript, by pimlico)
 builder-playground start l1 --bundler alto
+
+# rundler (Rust, by alchemy)
 builder-playground start l1 --bundler rundler
+
+# where the bundler is listening
+builder-playground port bundler http
 ```
+
+**External** — the chain runs here and the bundler runs on another machine, so you can
+measure, scale or swap it independently:
+
+```bash
+# on the playground host: prepare the chain, start no bundler, expose the ports
+builder-playground start l1 --bundler external --bind-external
+builder-playground port el http     # -> 8545
+```
+
+```bash
+# on the other machine: point any bundler at the execution client
+docker run -e NETWORK=dev -e NODE_HTTP=http://<playground-host>:8545 \
+  -e ENABLED_ENTRY_POINTS=v0.6 \
+  -e SIGNER_PRIVATE_KEYS=0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a \
+  -p 3000:3000 alchemyplatform/rundler:v0.11.0 node
+```
+
+See [ERC-4337 bundlers](#erc-4337-bundlers) for the predeployed addresses and a full
+walkthrough.
 
 ## CI / GitHub Actions
 
@@ -169,6 +194,33 @@ $ cast rpc eth_supportedEntryPoints --rpc-url http://localhost:3000
 
 Fund the new account (`cast send <account> --value 1ether ...`), then send
 UserOperations from it with any ERC-4337 client.
+
+#### Running the bundler on another machine
+
+A bundler is a plain RPC client of the execution client: it reads state, submits ordinary
+transactions and serves its own JSON-RPC. Nothing in the playground connects back to it,
+so unlike `--external-builder` there is no URL to configure. Use `--bundler external` to
+predeploy the contracts and expose `debug_traceCall` without starting a bundler, and
+`--bind-external` so the other machine can reach the execution client:
+
+```bash
+$ builder-playground start l1 --bundler external --bind-external
+$ builder-playground port el http
+8545
+```
+
+Then point the bundler at it from the other host, using any of the [static prefunded
+accounts](#static-prefunded-accounts) as its signer:
+
+```bash
+$ docker run -e NETWORK=dev -e NODE_HTTP=http://<playground-host>:8545 \
+    -e ENABLED_ENTRY_POINTS=v0.6 \
+    -e SIGNER_PRIVATE_KEYS=0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a \
+    -p 3000:3000 alchemyplatform/rundler:v0.11.0 node
+```
+
+`--bundler-unsafe` only applies to a bundler the playground runs itself, so combining it
+with `--bundler external` is rejected.
 
 This predeploys the ERC-4337 **v0.6** contracts in the L1 genesis, so they are available
 at block 0 at their canonical addresses:

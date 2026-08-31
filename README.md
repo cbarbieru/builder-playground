@@ -195,6 +195,22 @@ $ cast rpc eth_supportedEntryPoints --rpc-url http://localhost:3000
 Fund the new account (`cast send <account> --value 1ether ...`), then send
 UserOperations from it with any ERC-4337 client.
 
+[`examples/erc4337-send-userops.sh`](examples/erc4337-send-userops.sh) does all of this
+for you — it discovers the ports, creates and funds accounts, and sends UserOperations
+through whichever bundler is running:
+
+```bash
+$ ./examples/erc4337-send-userops.sh 2 2   # 2 accounts, 2 userops each
+created account 1/2: 0x9B16cC06c020b3eaA78DD8014D8c32e13E5830Ae
+created account 2/2: 0xeb53d6456492594aE62d7765e6128Ce95A79FDF8
+sending 2 userop(s) from 0x9B16cC06c020b3eaA78DD8014D8c32e13E5830Ae
+  userop 0x26f2a248… success=True tx=0x7343abbd…
+...
+sent 4, failed 0
+```
+
+It needs `curl` and either foundry's `cast` on `PATH` or docker.
+
 #### Running the bundler on another machine
 
 A bundler is a plain RPC client of the execution client: it reads state, submits ordinary
